@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SMS Gateway</title>
+<style>
+:root{--bg:#f5f6f8;--fg:#1b1f24;--card:#fff;--mut:#5f6b76;--line:#dfe3e8;--acc:#1f6feb;--ok:#1a7f37;--bad:#cf222e;--warn:#9a6700;--chip:#eef1f4}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--card:#161b22;--mut:#8b949e;--line:#30363d;--acc:#4493f8;--ok:#3fb950;--bad:#f85149;--warn:#d29922;--chip:#21262d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line)}
+.top{display:flex;align-items:center;gap:10px;padding:10px 16px}
+.top b{font-size:16px}.top small{color:var(--mut);margin-left:auto;font-size:12px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--mut);flex:none}
+nav{display:flex;overflow-x:auto;gap:2px;padding:0 10px}
+nav a{padding:9px 10px;color:var(--mut);text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap}
+nav a.on{color:var(--fg);border-color:var(--acc)}
+main{max-width:780px;margin:auto;padding:14px 16px 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+h2{font-size:15px;margin:0 0 10px}
+h3{font-size:14px;margin:16px 0 6px;color:var(--mut);font-weight:600}
+table{width:100%;border-collapse:collapse}
+td{padding:5px 0;vertical-align:top;border-bottom:1px solid var(--line);word-break:break-word}
+td:first-child{color:var(--mut);width:40%;padding-right:10px}
+tr:last-child td{border-bottom:0}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.mut{color:var(--mut)}
+input,select,textarea{font:inherit;width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+textarea{font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;min-height:220px}
+label{display:block;margin:12px 0 4px;font-weight:600;font-size:14px}
+.help{color:var(--mut);font-size:12.5px;margin-top:3px}
+button{font:inherit;padding:9px 14px;border:0;border-radius:8px;background:var(--acc);color:#fff;cursor:pointer;margin:8px 8px 0 0}
+button.sec{background:var(--chip);color:var(--fg);border:1px solid var(--line)}
+button.danger{background:var(--bad)}
+button:disabled{opacity:.5}
+.chk{display:flex;align-items:center;gap:8px;margin-top:12px}.chk input{width:auto}
+.msg{margin-top:10px;padding:9px 11px;border-radius:8px;background:var(--chip);white-space:pre-wrap;word-break:break-word}
+.msg:empty{display:none}
+pre{white-space:pre-wrap;word-break:break-all;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);padding:10px;border-radius:8px;max-height:65vh;overflow:auto;margin:8px 0 0}
+.sms{padding:9px 0;border-bottom:1px solid var(--line)}.sms:last-child{border:0}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:9px;background:var(--chip);color:var(--mut);margin-left:6px}
+.ev{font-size:13px;padding:4px 0;border-bottom:1px solid var(--line)}.ev:last-child{border:0}
+.hidden{display:none}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+details summary{cursor:pointer;color:var(--acc);margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="top"><span class="dot" id="dot"></span><b>SMS Gateway</b><small id="fw"></small></div>
+  <nav id="nav">
+    <a href="#status">Status</a><a href="#sms">SMS</a><a href="#settings">Settings</a><a href="#updates">Updates</a><a href="#tools">Tools</a>
+  </nav>
+</header>
+<main>
+
+<section id="setup" class="hidden">
+  <div class="card">
+    <h2>First-time setup</h2>
+    <p>The board still uses the public default passwords. Choose your own before anything else. The board restarts afterwards; reconnect to its Wi-Fi with the new name and password.</p>
+    <label>Admin password (user stays <b>admin</b>)</label><input id="su_adm" type="password" minlength="8" autocomplete="new-password">
+    <label>Board Wi-Fi name</label><input id="su_ssid" maxlength="32">
+    <label>Board Wi-Fi password (8–63 characters)</label><input id="su_ap" type="password" minlength="8" maxlength="63" autocomplete="new-password">
+    <button onclick="doSetup()">Save and restart</button>
+    <div class="msg" id="su_msg"></div>
+  </div>
+</section>
+
+<section id="p-status" class="hidden">
+  <div class="card"><h2>Internet</h2><table id="t_net"></table></div>
+  <div class="card"><h2>Modem &amp; SIM</h2><table id="t_modem"></table></div>
+  <div class="card"><h2>Firmware</h2><table id="t_fw"></table><button class="sec" onclick="go('updates')">Updates</button></div>
+  <div class="card"><h2>Board</h2><table id="t_board"></table></div>
+  <div class="card"><h2>Recent events</h2><div id="events" class="mut">–</div></div>
+</section>
+
+<section id="p-sms" class="hidden">
+  <div class="card">
+    <div class="row">
+      <input id="sms_q" placeholder="Search number or text" style="flex:1;min-width:160px" oninput="renderSms()">
+      <select id="sms_f" style="width:auto" onchange="renderSms()">
+        <option value="all">All</option><option value="unread">Unread</option><option value="otp">Login codes</option>
+        <option value="out">Sent</option><option value="failed">Failed to send</option>
+      </select>
+    </div>
+    <button onclick="compose()">New message</button>
+    <button class="sec" onclick="loadSms()">Refresh</button>
+    <button class="sec" onclick="toggleSelect()" id="btn_sel">Select</button>
+    <button class="danger hidden" id="btn_del" onclick="delSelected()">Delete selected</button>
+    <button class="sec" onclick="location.href='/api/sms/export'">Export all</button>
+    <div class="msg" id="sms_msg"></div>
+  </div>
+  <div class="card hidden" id="composer">
+    <h2>New message</h2>
+    <label>To</label><input id="c_to" inputmode="tel" placeholder="+85291234567 or 91234567">
+    <label>Message</label><textarea id="c_text" style="min-height:110px;font:inherit" oninput="countSms()"></textarea>
+    <div class="help" id="c_count"></div>
+    <button onclick="sendSms()">Send</button><button class="sec" onclick="$('composer').classList.add('hidden')">Cancel</button>
+    <div class="msg" id="c_msg"></div>
+  </div>
+  <div class="card" id="sms_view"><div id="smslist">Loading…</div></div>
+</section>
+
+<section id="p-settings" class="hidden">
+  <div id="settings_form"></div>
+  <div class="card" style="position:sticky;bottom:8px">
+    <button onclick="saveSettings()">Save settings</button>
+    <button class="sec hidden" id="btn_restart" onclick="reboot()">Restart now to apply</button>
+    <div class="msg" id="set_msg"></div>
+  </div>
+</section>
+
+<section id="p-updates" class="hidden">
+  <div class="card">
+    <h2>Firmware updates</h2>
+    <table id="t_ota"></table>
+    <div id="ota_bar" class="hidden" style="background:var(--chip);border-radius:6px;height:12px;margin:10px 0;overflow:hidden"><div id="ota_fill" style="height:100%;width:0;background:var(--acc)"></div></div>
+    <button onclick="otaAct('check')">Check now</button>
+    <button class="sec" id="ota_install" onclick="otaAct('install')">Install latest now</button>
+    <div class="msg" id="ota_msg"></div>
+  </div>
+  <div class="card">
+    <h2>How updates work</h2>
+    <p class="mut">The board reads <b>manifest.json</b> of the latest release in the public repository and installs a newer build according to <b>Settings › Updates › Update mode</b>: <b>dev</b> (default) checks every minute on Wi-Fi and installs at once; <b>auto</b> hourly; <b>nightly</b> in a night window; <b>notify</b> only tells you; <b>off</b> never checks.</p>
+    <p class="mut">Only images signed with the project's key are accepted. If a new version does not start properly within a minute, the board goes back to the previous one and skips that build. On 4G, checks are limited (Settings › Updates) because each costs about 10 KB of data.</p>
+  </div>
+  <div class="card">
+    <h2>Install a file</h2>
+    <p class="mut">Choose an <b>-ota.bin</b> from a release. It must be signed with the project's key.</p>
+    <input type="file" id="fwfile" accept=".bin">
+    <button onclick="upload()">Install</button>
+    <div class="msg" id="fw_msg"></div>
+  </div>
+</section>
+
+<section id="p-tools" class="hidden">
+  <div class="card">
+    <h2>Report</h2>
+    <p class="mut">Status, settings (no passwords) and the device log. Phone numbers, IMEI, SIM ids, MAC addresses and Wi-Fi names are masked; SMS text is never included.</p>
+    <button class="sec" onclick="location.href='/api/report'">Download report</button>
+  </div>
+  <div class="card">
+    <h2>Modem console</h2>
+    <div class="row"><input id="atcmd" value="AT+CSQ" autocapitalize="characters" autocomplete="off" style="flex:1"><button onclick="sendAt()">Send</button></div>
+    <pre id="atout" class="hidden"></pre>
+  </div>
+  <div class="card">
+    <h2>Device log</h2>
+    <button class="sec" onclick="showLog()">Show log</button>
+    <pre id="logout" class="hidden"></pre>
+  </div>
+  <div class="card">
+    <h2>Settings backup</h2>
+    <button class="sec" onclick="location.href='/api/settings/export'">Download backup (includes passwords)</button>
+    <label>Restore from backup</label><input type="file" id="bkfile" accept=".json">
+    <button class="sec" onclick="restore()">Restore</button>
+    <button class="danger" onclick="resetAll()">Reset all settings</button>
+    <div class="msg" id="bk_msg"></div>
+  </div>
+  <div class="card"><button class="danger" onclick="reboot()">Restart board</button></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const row=(k,v,c)=>'<tr><td>'+k+'</td><td class="'+(c||'')+'">'+v+'</td></tr>';
+const ago=t=>{if(!t||t<1600000000)return '–';const s=Math.round(Date.now()/1000-t);return s<60?s+' s ago':s<3600?Math.round(s/60)+' min ago':Math.round(s/3600)+' h ago'};
+const dur=s=>s<60?s+' s':s<3600?Math.floor(s/60)+' min':Math.floor(s/3600)+' h '+Math.floor(s%3600/60)+' min';
+async function api(path,opt){const r=await fetch(path,opt);if(r.status==403){showSetup();throw new Error('setup')}return r}
+async function jpost(path,body){const r=await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:body==null?'':(typeof body=='string'?body:JSON.stringify(body))});return r.json()}
+function msg(id,t,cls){const e=$(id);e.textContent=t||'';e.className='msg '+(cls||'')}
+
+let st=null,schema=null,values=null,page='status',paused=false;
+function go(p){location.hash=p}
+function showSetup(){$('setup').classList.remove('hidden');document.querySelectorAll('main>section:not(#setup)').forEach(s=>s.classList.add('hidden'));$('nav').classList.add('hidden')}
+function route(){
+  page=(location.hash||'#status').slice(1);
+  if(!['status','sms','settings','updates','tools'].includes(page))page='status';
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')=='#'+page));
+  document.querySelectorAll('main>section').forEach(s=>s.classList.toggle('hidden',s.id!='p-'+page));
+  if(st&&!st.board.setup_done)return showSetup();
+  if(page=='sms')loadSms();
+  if(page=='settings')loadSettings();
+  if(page=='updates')renderOta();
+}
+window.addEventListener('hashchange',route);
+
+async function tick(){
+  if(paused)return;
+  try{
+    const r=await fetch('/api/status');st=await r.json();
+    if(!st.board.setup_done){showSetup();if(!$('su_ssid').value)$('su_ssid').value=st.net.ap_ssid;return}
+    const b=st.board,n=st.net,m=st.modem,l=st.lte,o=st.ota;
+    $('fw').textContent=b.fw+' · build '+b.build;
+    $('dot').style.background=n.online?'var(--ok)':'var(--bad)';
+    $('t_net').innerHTML=row('Internet',n.uplink=='none'?'none':(n.uplink=='4g'?'4G (fallback)':'Wi-Fi')+(n.online?' · online':' · no internet'),n.online?'ok':'bad')
+      +row('Upstream Wi-Fi',n.wifi_connected?esc(n.wifi_ssid)+' ('+n.wifi_rssi+' dBm)'+(n.wifi_online?'':' · no internet'):'not connected'+(n.wifi_fail_reason?' (last failure code '+n.wifi_fail_reason+')':''),n.wifi_online?'ok':'')
+      +row('4G data',!l.enabled?'off in settings':(l.up?'connected'+(n.lte_online?'':' · no internet'):'not connected'),l.up?'ok':'')
+      +row('Clock',n.clock_ok?new Date(b.time*1000).toLocaleString():'not set yet (needs internet once)',n.clock_ok?'':'warn')
+      +row('Admin address','http://'+esc(n.ap_ip)+'/ · http://smsgateway.local/');
+    $('t_modem').innerHTML=row('Modem',m.alive?'answering':'not answering — check the 4G DIP switch',m.alive?'ok':'bad')
+      +(m.alive?row('SIM',esc(m.sim),m.sim=='READY'?'ok':'bad')+row('Operator',esc(m.operator||'–'))
+      +row('Signal',m.csq==99?'unknown':m.rssi_dbm+' dBm (CSQ '+m.csq+')',m.csq==99||m.csq<10?'warn':'ok')
+      +row('LTE',esc(m.lte_reg))+row('Number on SIM',esc(m.own_number||'not stored on SIM'))
+      +row('SMS saved since start',m.sms_saved_since_boot)+row('Model',esc(m.model+' '+m.revision)):'');
+    $('t_fw').innerHTML=row('Running',esc(o.version)+' (build '+o.build+')')+row('Update mode',esc(o.mode))
+      +row('Updates',esc(o.state)+(o.result?' · '+esc(o.result):''),o.available?'warn':'');
+    $('t_board').innerHTML=row('Up for',dur(b.uptime_s))+row('Last restart',esc(b.reset_reason),/crash|watchdog|brownout/.test(b.reset_reason)?'bad':'')
+      +row('Internal RAM',b.internal_kb+' KB free (lowest '+b.internal_min_kb+' KB)',b.internal_min_kb<20?'bad':'')
+      +row('Battery',st.battery.found?(st.battery.volts||0).toFixed(2)+' V · '+Math.round(st.battery.percent||0)+' %':'gauge not found')
+      +row('Storage',b.storage_used_kb+' / '+b.storage_total_kb+' KB')+row('Messages on board',b.sms_stored);
+    badge();$('events').innerHTML=st.events.length?st.events.map(e=>'<div class="ev"><span class="mut">'+ago(e.t)+'</span> · '+esc(e.text)+'</div>').join(''):'none yet';
+    if(page=='updates')renderOta();
+  }catch(e){$('dot').style.background='var(--mut)'}
+}
+function renderOta(){
+  if(!st)return;const o=st.ota;
+  $('t_ota').innerHTML=row('Running',esc(o.version)+' (build '+o.build+')')+row('Mode',esc(o.mode))
+    +row('Status',esc(o.state)+(o.result?' · '+esc(o.result):''),o.state=='error'?'bad':o.available?'warn':'')
+    +(o.available?row('Available',esc(o.available)+' (build '+o.available_build+')','warn'):'')
+    +(o.bad_build?row('Skipped build',o.bad_build+' (refused or failed to start)','bad'):'')
+    +row('Last check',o.last_check?ago(o.last_check):'not yet')+(o.mode!='off'&&o.next_check_s>0?row('Next check','in '+dur(Math.round(o.next_check_s))):'');
+  $('ota_bar').classList.toggle('hidden',o.progress<0);$('ota_fill').style.width=Math.max(0,o.progress)+'%';
+}
+async function otaAct(a){const r=await jpost('/api/ota',{action:a});msg('ota_msg',r.message,r.ok?'ok':'bad');setTimeout(tick,1500)}
+
+async function doSetup(){
+  const a=$('su_adm').value,s=$('su_ssid').value,p=$('su_ap').value;
+  if(a.length<8||p.length<8)return msg('su_msg','Passwords need at least 8 characters.','bad');
+  const r=await (await fetch('/api/setup',{method:'POST',body:JSON.stringify({adm_pass:a,ap_ssid:s,ap_pass:p})})).json();
+  msg('su_msg',r.message,r.ok?'ok':'bad');
+  if(r.ok){paused=true;msg('su_msg',r.message+'\n\nThen open this page again and log in as admin with your NEW admin password (the browser asks for it: that is expected).','ok')}
+}
+let inbox=[],outbox=[],seen=0,thread=null,selecting=false,selected=new Set();
+const norm=n=>{const d=String(n||"").replace(/[^0-9+]/g,"");if(!st)return d;const cc="852";return d.startsWith("+"+cc)?d.slice(cc.length+1):(d.startsWith("00"+cc)?d.slice(cc.length+2):d)};
+const when=m=>m.rx>1600000000?new Date(m.rx*1000).toLocaleString():(m.sent||"");
+async function loadSms(){
+  try{[inbox,outbox]=await Promise.all([(await api("/api/sms?box=in&limit=1000")).json(),(await api("/api/sms?box=out&limit=1000")).json()]);
+  seen=st?st.board.sms_last_id-st.board.sms_unread:0;renderSms();
+  const max=inbox.reduce((a,m)=>Math.max(a,m.id),0);if(max>seen)jpost("/api/sms/seen?id="+max).then(()=>{if(st)st.board.sms_unread=0;badge()});}catch(e){}
+}
+function all(){return inbox.map(m=>({...m,box:"in",peer:m.from,key:"in"+m.id})).concat(outbox.map(m=>({...m,box:"out",peer:m.to,key:"out"+m.id})))}
+function match(m,q,f){
+  if(f=="unread"&&!(m.box=="in"&&m.id>seen))return false;if(f=="otp"&&!m.otp)return false;if(f=="out"&&m.box!="out")return false;
+  if(f=="failed"&&!(m.box=="out"&&!m.ok))return false;if(!q)return true;q=q.toLowerCase();
+  return String(m.peer).toLowerCase().includes(q)||String(m.text).toLowerCase().includes(q)}
+function bubble(m){
+  const sel=selecting?'<input type="checkbox" style="width:auto;margin-right:6px" '+(selected.has(m.key)?"checked ":"")+'onchange="sel(\x27'+m.key+'\x27,this.checked)">':"";
+  const code=(m.text.match(/(^|[^0-9])([0-9]{4,8})([^0-9]|$)/)||[])[2];
+  return '<div class="sms" style="'+(m.box=="out"?"text-align:right":"")+'">'+sel+'<span class="mut">'+(m.box=="out"?"You → "+esc(m.peer):esc(m.peer))+" · "+esc(when(m))+'</span>'
+   +(m.box=="in"&&m.id>seen?'<span class="tag">new</span>':"")+(m.otp?'<span class="tag">login code</span>':"")+(m.parts>1?'<span class="tag">'+m.parts+' parts</span>':"")
+   +(m.box=="out"&&!m.ok?'<span class="tag bad">not sent</span>':"")
+   +'<div style="white-space:pre-wrap;margin:3px 0">'+esc(m.text)+'</div>'+(m.error?'<div class="help bad">'+esc(m.error)+'</div>':"")
+   +'<div class="row" style="'+(m.box=="out"?"justify-content:flex-end":"")+'">'
+   +(code?'<button class="sec" onclick="copyText(\x27'+code+'\x27)">Copy '+code+'</button>':"")
+   +'<button class="sec" onclick="copyText('+esc(JSON.stringify(m.text))+')">Copy</button>'
+   +'<button class="sec" onclick="fwdSms(\x27'+m.key+'\x27)">Forward</button>'
+   +(m.box=="in"?'<button class="sec" onclick="compose(\x27'+esc(m.peer)+'\x27)">Reply</button>':"")
+   +'<button class="danger" onclick="delOne(\x27'+m.key+'\x27)">Delete</button></div></div>'}
+function renderSms(){
+  const q=$("sms_q").value.trim(),f=$("sms_f").value,list=all().filter(m=>match(m,q,f)).sort((a,b)=>(b.rx||0)-(a.rx||0)||b.id-a.id);
+  const el=$("smslist");
+  if(thread!==null){const t=all().filter(m=>norm(m.peer)==thread).sort((a,b)=>(a.rx||0)-(b.rx||0)||a.id-b.id);
+    el.innerHTML='<button class="sec" onclick="thread=null;renderSms()">← All conversations</button><h2 style="margin-top:12px">'+esc(thread)+'</h2>'
+      +(t.map(bubble).join("")||"No messages.")+'<label>Reply</label><textarea id="r_text" style="min-height:80px;font:inherit"></textarea><button onclick="reply()">Send reply</button><div class="msg" id="r_msg"></div>';return}
+  if(q||f!="all"){el.innerHTML=list.length?list.map(bubble).join(""):"Nothing matches.";return}
+  const conv={};list.forEach(m=>{const k=norm(m.peer);(conv[k]=conv[k]||[]).push(m)});
+  const keys=Object.keys(conv);
+  el.innerHTML=keys.length?keys.map(k=>{const ms=conv[k],last=ms[0],unread=ms.filter(m=>m.box=="in"&&m.id>seen).length;
+    return '<div class="sms" style="cursor:pointer" onclick="thread=\x27'+esc(k)+'\x27;renderSms()"><b>'+esc(last.peer)+'</b>'+(unread?'<span class="tag">'+unread+' new</span>':"")
+      +'<span class="tag">'+ms.length+'</span><br><span class="mut">'+esc(when(last))+'</span><div class="help" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(last.box=="out"?"You: ":"")+esc(last.text)+'</div></div>'}).join(""):"No messages yet."}
+function compose(to,text){$("composer").classList.remove("hidden");$("c_to").value=to||"";$("c_text").value=text||"";countSms();msg("c_msg","");$("composer").scrollIntoView();(to?$("c_text"):$("c_to")).focus()}
+function fwdSms(key){const m=all().find(x=>x.key==key);if(m)compose("",m.text)}
+const GSM="@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà",GSMX="^{}\\[~]|€\f";
+function countSms(){const t=$("c_text").value,cps=[...t];const gsm=cps.every(c=>GSM.includes(c)||GSMX.includes(c));
+  const len=gsm?cps.reduce((a,c)=>a+(GSMX.includes(c)?2:1),0):t.length;const single=gsm?160:70,per=gsm?153:67;
+  const parts=len<=single?1:Math.ceil(len/per);$("c_count").textContent=len+" characters · "+(gsm?"standard":"Unicode")+" · "+parts+" SMS"+(parts>8?" (too long, max 8)":"")}
+async function sendSms(){const to=$("c_to").value.trim(),text=$("c_text").value;msg("c_msg","Sending…");
+  const r=await jpost("/api/sms/send",{to,text});msg("c_msg",r.message,r.ok?"ok":"bad");if(r.ok){$("c_text").value="";countSms()}loadSms()}
+async function reply(){const text=$("r_text").value;if(!text.trim())return;msg("r_msg","Sending…");
+  const last=all().filter(m=>norm(m.peer)==thread).sort((a,b)=>(b.rx||0)-(a.rx||0))[0];
+  const r=await jpost("/api/sms/send",{to:last?last.peer:thread,text});msg("r_msg",r.message,r.ok?"ok":"bad");await loadSms()}
+function toggleSelect(){selecting=!selecting;selected.clear();$("btn_sel").textContent=selecting?"Cancel selection":"Select";$("btn_del").classList.toggle("hidden",!selecting);renderSms()}
+function sel(k,on){on?selected.add(k):selected.delete(k)}
+async function delKeys(keys){const ins=keys.filter(k=>k.startsWith("in")).map(k=>+k.slice(2)),outs=keys.filter(k=>k.startsWith("out")).map(k=>+k.slice(3));
+  let t=0;if(ins.length)t+=(await jpost("/api/sms/delete",{box:"in",ids:ins})).ok?ins.length:0;if(outs.length)t+=(await jpost("/api/sms/delete",{box:"out",ids:outs})).ok?outs.length:0;
+  msg("sms_msg","Deleted "+t+" message(s).");await loadSms()}
+async function delOne(k){if(confirm("Delete this message from the board?"))delKeys([k])}
+async function delSelected(){if(!selected.size)return;if(confirm("Delete "+selected.size+" message(s)?")){await delKeys([...selected]);toggleSelect()}}
+function copyText(t){(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>msg("sms_msg","Copied."),()=>prompt("Copy:",t))}
+function badge(){const a=document.querySelector('nav a[href="#sms"]');if(a&&st)a.textContent="SMS"+(st.board.sms_unread?" ("+st.board.sms_unread+")":"")}
+
+async function loadSettings(){
+  const d=await (await api('/api/settings')).json();schema=d.schema;values=d.values;
+  const groups=[];schema.forEach(s=>{if(!groups.includes(s.group))groups.push(s.group)});
+  let h='';
+  groups.forEach(g=>{
+    h+='<div class="card"><h2>'+esc(g)+'</h2>';
+    if(g=='Internet')h+='<button class="sec" onclick="scan()">Scan for networks</button><div id="scan" class="help"></div>';
+    schema.filter(s=>s.group==g).forEach(s=>{
+      const v=values[s.key]??'',id='s_'+s.key;
+      if(s.type=='bool')h+='<div class="chk"><input type="checkbox" id="'+id+'"'+(v=='1'?' checked':'')+'><span><b>'+esc(s.label)+'</b></span></div>';
+      else{h+='<label for="'+id+'">'+esc(s.label)+(s.reboot?' <span class="tag">restart</span>':'')+'</label>';
+        if(s.type=='enum')h+='<select id="'+id+'">'+s.options.split('|').map(o=>'<option'+(o==v?' selected':'')+'>'+esc(o)+'</option>').join('')+'</select>';
+        else h+='<input id="'+id+'" '+(s.type=='secret'?'type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore ':'')+(s.type=='int'?'inputmode="numeric" ':'')+'value="'+esc(v)+'" placeholder="'+esc(s.def)+'">';}
+      if(s.help)h+='<div class="help">'+esc(s.help)+'</div>';
+    });
+    if(g=='Forwarding')h+='<h3>Check a channel (save first)</h3><button class="sec" onclick="ftest(\'tg\')">Test Telegram</button><button class="sec" onclick="ftest(\'wh\')">Test webhook</button><button class="sec" onclick="ftest(\'mq\')">Test MQTT</button><button class="sec" onclick="chats()">Find my Telegram chat id</button><div class="msg" id="fw_test"></div>';
+    h+='</div>';
+  });
+  $('settings_form').innerHTML=h;
+}
+async function saveSettings(){
+  const out={},changed=[];schema.forEach(s=>{const e=$('s_'+s.key);if(!e)return;const v=s.type=='bool'?(e.checked?'1':'0'):e.value.trim();
+    if(v!==(values[s.key]??''))out[s.key]=v,changed.push(s)});
+  if(!changed.length)return msg('set_msg','Nothing changed.');
+  const risky=changed.filter(s=>['adm_pass','ap_pass','ap_ssid','ap_ip'].includes(s.key));
+  if(risky.length&&!confirm('You are changing: '+risky.map(s=>s.label).join(', ')+'.\n\nIf you did not mean to (a browser may fill in saved passwords by itself), press Cancel.'+(out.adm_pass?'\n\nAfter saving, the browser asks you to log in again: user admin, the NEW admin password.':'')))return;
+  const r=await jpost('/api/settings',out);msg('set_msg',r.message+(r.ok?' Changed: '+changed.map(s=>s.label).join(', ')+'.':''),r.ok?'ok':'bad');
+  if(r.ok){changed.forEach(s=>values[s.key]=s.type=='secret'&&out[s.key]?'********':out[s.key])}
+  if(r.reboot)$('btn_restart').classList.remove('hidden');
+}
+async function scan(){$('scan').textContent='Scanning…';const a=await (await api('/api/wifi/scan')).json();
+  $('scan').innerHTML=a.length?a.sort((x,y)=>y.rssi-x.rssi).map(n=>esc(n.ssid||'(hidden)')+' · '+n.rssi+' dBm · ch '+n.channel+(n.open?' · open':'')).join('<br>'):'Nothing found.'}
+
+async function upload(){const f=$('fwfile').files[0];if(!f)return msg('fw_msg','Choose the -ota.bin file first.','bad');
+  msg('fw_msg','Uploading '+Math.round(f.size/1024)+' KB… keep this page open.');
+  try{const r=await (await api('/api/update',{method:'POST',body:f})).json();msg('fw_msg',r.message,r.ok?'ok':'bad')}catch(e){msg('fw_msg','Upload failed: '+e,'bad')}}
+async function sendAt(){const c=$('atcmd').value.trim();if(!c)return;const o=$('atout');o.classList.remove('hidden');o.textContent='> '+c+'\n…\n'+o.textContent;
+  const r=await jpost('/api/at',{cmd:c});o.textContent='> '+c+'\n'+r.reply+(r.ok?'\nOK':'')+'\n\n'+o.textContent.replace(/^> .*\n…\n/,'')}
+$('atcmd').addEventListener('keydown',e=>{if(e.key=='Enter')sendAt()});
+async function showLog(){const o=$('logout');o.classList.remove('hidden');o.textContent='Loading…';o.textContent=await (await api('/api/log')).text();o.scrollTop=o.scrollHeight}
+async function restore(){const f=$('bkfile').files[0];if(!f)return msg('bk_msg','Choose a backup file.','bad');
+  const r=await jpost('/api/settings',await f.text());msg('bk_msg',r.message+(r.reboot?' Restart to apply everything.':''),r.ok?'ok':'bad')}
+async function resetAll(){if(!confirm('Reset ALL settings to defaults, including passwords? The SMS store is kept.'))return;const r=await jpost('/api/settings/reset');msg('bk_msg',r.message)}
+async function reboot(){if(!confirm('Restart the board?'))return;await fetch('/api/reboot',{method:'POST'});document.body.insertAdjacentHTML('afterbegin','<div class="msg" style="margin:12px">Restarting… reload in 30 seconds.</div>')}
+
+tick().then(route);setInterval(()=>{if(page=='status'||page=='updates')tick()},3000);
+</script>
+</body>
+</html>

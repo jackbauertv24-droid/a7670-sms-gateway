@@ -1,0 +1,116 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  IDF_IMAGE: espressif/idf:v5.5.6
+  # Internal RAM left after the firmware's static use (DIRAM "remain" in idf.py size).
+  # The runtime needs about 100 KB more for Wi-Fi, USB and task stacks; below this the
+  # predecessor project ran out of internal RAM, so the build fails instead.
+  MIN_DIRAM_FREE: "150000"
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests for the pure-C parts
+        run: |
+          set -e
+          FLAGS="-Wall -Wextra -Werror -std=c11 -g -fsanitize=address,undefined -I firmware/core"
+          gcc $FLAGS tests/test_sms_pdu.c firmware/core/sms_pdu.c -o t_pdu && ./t_pdu
+          gcc $FLAGS tests/test_text.c firmware/core/textutil.c -o t_text && ./t_text
+          gcc $FLAGS tests/test_call.c firmware/core/callparse.c -o t_call && ./t_call
+          gcc $FLAGS tests/test_redact.c firmware/core/redact.c -o t_redact && ./t_redact
+          gcc $FLAGS tests/test_submit.c firmware/core/sms_pdu.c -o t_submit
+          npm install --no-save --silent node-pdu@2.1.2
+          ./t_submit | node tests/verify_submit.mjs
+
+  firmware:
+    runs-on: ubuntu-24.04
+    needs: host-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp build identity
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then VERSION="$GITHUB_REF_NAME"; else VERSION="dev-${GITHUB_SHA::7}"; fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          # The build number only grows, so the board can tell newer from older.
+          cat > firmware/main/build_info.h <<EOT
+          #pragma once
+          #define FW_VERSION "${VERSION}"
+          #define FW_COMMIT "${GITHUB_SHA::7}"
+          #define FW_BUILT "$(date -u +%Y-%m-%dT%H:%MZ)"
+          #define FW_BUILD ${GITHUB_RUN_NUMBER}
+          EOT
+          cat firmware/main/build_info.h
+
+      - name: Signing key from the repository secret
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then echo "ERROR: the SIGNING_KEY secret is not available (forks cannot build signed images)"; exit 1; fi
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > firmware/secure_boot_signing_key.pem
+
+      - name: Build, check signature and memory (ESP-IDF ${{ env.IDF_IMAGE }})
+        run: |
+          docker run --rm -e MIN_DIRAM_FREE -v "$PWD:/project" -w /project/firmware "$IDF_IMAGE" bash -c '
+            set -e
+            git config --global --add safe.directory "*"
+            idf.py set-target esp32s3
+            idf.py build
+            echo "--- signature check ---"
+            espsecure.py verify_signature --version 2 --keyfile secure_boot_signing_key.pem build/sms_gateway.bin
+            echo "--- memory ---"
+            idf.py size | tee size.txt | tail -n 25
+            free=$(grep -E "DIRAM" size.txt | head -1 | tr -d "│|" | awk "{print \$(NF-1)}")
+            echo "DIRAM free after static use: $free bytes (minimum $MIN_DIRAM_FREE)"
+            if [ -z "$free" ] || [ "$free" -lt "$MIN_DIRAM_FREE" ]; then echo "ERROR: internal RAM budget exceeded"; exit 1; fi
+            cd build
+            esptool.py --chip esp32s3 merge_bin -o merged.bin @flash_args
+          '
+          rm -f firmware/secure_boot_signing_key.pem
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp firmware/build/merged.bin "dist/a7670-sms-gateway-${VERSION}-full.bin"
+          cp firmware/build/sms_gateway.bin "dist/a7670-sms-gateway-${VERSION}-ota.bin"
+          OTA="dist/a7670-sms-gateway-${VERSION}-ota.bin"
+          cat > dist/manifest.json <<EOT
+          {"version": "${VERSION}", "build": ${GITHUB_RUN_NUMBER}, "commit": "${GITHUB_SHA::7}",
+           "ota": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/a7670-sms-gateway-${VERSION}-ota.bin",
+           "size": $(stat -c %s "$OTA"), "sha256": "$(sha256sum "$OTA" | cut -d' ' -f1)"}
+          EOT
+          cat dist/manifest.json
+          (cd dist && sha256sum *.bin > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a7670-sms-gateway-${{ env.VERSION }}
+          path: dist/
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          Build ${GITHUB_RUN_NUMBER} (\`${GITHUB_SHA::7}\`) of ${VERSION}, signed with the project key.
+
+          **First install (USB cable, once):** flash \`a7670-sms-gateway-${VERSION}-full.bin\` at address **0x0**.
+          Settings are kept by later cable flashes.
+
+          **Boards already running it update themselves** (Settings > Updates), or upload
+          \`a7670-sms-gateway-${VERSION}-ota.bin\` on the admin page. Unsigned or foreign images are refused.
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md

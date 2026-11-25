@@ -1,0 +1,102 @@
+// a7670-sms-gateway: stores every SMS the SIM receives and (from milestone 3)
+// forwards it on many channels; signed updates from the public repository.
+// Waveshare ESP32-S3-A7670E-4G, ESP-IDF.
+#include <stdio.h>
+#include <string.h>
+
+#include "battery.h"
+#include "build_info.h"
+#include "devlog.h"
+#include "esp_event.h"
+#include "esp_heap_caps.h"
+#include "esp_mac.h"
+#include "esp_netif.h"
+#include "esp_ota_ops.h"
+#include "esp_spiffs.h"
+#include "esp_system.h"
+#include "events.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "led.h"
+#include "lte.h"
+#include "modem_at.h"
+#include "netmgr.h"
+#include "nvs_flash.h"
+#include "ota.h"
+#include "settings.h"
+#include "smsstore.h"
+#include "web.h"
+
+// Failed memory requests: recorded without allocating (this runs inside the
+// failing allocation), shown in reports.
+static volatile uint32_t fail_count, fail_size, fail_caps;
+static const char *volatile fail_task;
+static void on_alloc_failed(size_t size, uint32_t caps, const char *fn) {
+  fail_count++;
+  fail_size = size;
+  fail_caps = caps;
+  fail_task = pcTaskGetName(NULL);
+}
+void alloc_failures(char *out, size_t cap) {
+  snprintf(out, cap, "failed memory requests: %lu", (unsigned long)fail_count);
+  if (fail_count)
+    snprintf(out + strlen(out), cap - strlen(out), ", last: %lu bytes, caps 0x%lx, task %s", (unsigned long)fail_size,
+             (unsigned long)fail_caps, fail_task ? fail_task : "?");
+}
+
+void app_main(void) {
+  heap_caps_register_failed_alloc_callback(on_alloc_failed);
+  devlog_init();
+  devlog("=== a7670-sms-gateway %s build %d commit %s built %s ===", FW_VERSION, FW_BUILD, FW_COMMIT, FW_BUILT);
+
+  esp_err_t e = nvs_flash_init();
+  if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    nvs_flash_erase();
+    nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(esp_netif_init());
+  ESP_ERROR_CHECK(esp_event_loop_create_default());
+  esp_vfs_spiffs_conf_t fs = {.base_path = "/data", .partition_label = "storage", .max_files = 6,
+                              .format_if_mount_failed = true};
+  e = esp_vfs_spiffs_register(&fs);
+  devlog("storage: %s", esp_err_to_name(e));
+
+  cfg_init();
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+  char ssid[33];
+  snprintf(ssid, sizeof(ssid), "SMSGateway-%02X%02X", mac[4], mac[5]);
+  cfg_set_runtime_default("ap_ssid", ssid);
+
+  events_init();
+  smsstore_init();
+  battery_init();
+  led_start();
+  netmgr_start();
+  web_start();
+  modem_uart_start();
+  lte_start();
+  ota_start();
+  event_post("Started %s (build %d)%s", FW_VERSION, FW_BUILD, cfg_bool("setup_done") ? "" : ", first-run setup pending");
+
+  // Keep this firmware only if it runs for a minute; otherwise the bootloader
+  // goes back to the previous one on the next reset (and OTA skips this build).
+  vTaskDelay(pdMS_TO_TICKS(60000));
+  const esp_partition_t *run = esp_ota_get_running_partition();
+  esp_ota_img_states_t st;
+  if (run && esp_ota_get_state_partition(run, &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY) {
+    esp_ota_mark_app_valid_cancel_rollback();
+    devlog("ota: this firmware is confirmed");
+  }
+  // Memory guard: internal RAM running out silently broke Wi-Fi, 4G and the
+  // camera in the predecessor project, so say so as soon as it gets tight.
+  bool warned = false;
+  for (;;) {
+    size_t low = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    if (!warned && low < 20 * 1024) {
+      warned = true;
+      event_post("Warning: internal RAM went down to %u KB free; please send a report", (unsigned)(low / 1024));
+    }
+    vTaskDelay(pdMS_TO_TICKS(30000));
+  }
+}

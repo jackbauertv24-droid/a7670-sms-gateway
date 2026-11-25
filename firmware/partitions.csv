@@ -1,0 +1,11 @@
+# 16 MB flash. Settings (nvs) sit AFTER the two app slots, so flashing the
+# merged -full.bin by cable (which covers 0x0 up to the end of the app) leaves
+# them alone. Two 6 MB app slots for signed updates with rollback, ~3.8 MB for
+# the SMS store and logs.
+# Name,    Type, SubType,  Offset,   Size
+otadata,   data, ota,      0x9000,   0x2000
+ota_0,     app,  ota_0,    0x10000,  0x600000
+ota_1,     app,  ota_1,    0x610000, 0x600000
+nvs,       data, nvs,      0xC10000, 0x10000
+storage,   data, spiffs,   0xC20000, 0x3D0000
+coredump,  data, coredump, 0xFF0000, 0x10000
